@@ -64,7 +64,7 @@ enum InterceptorContext[config] {
 
 type alias CurrentInterceptorContext = InterceptorContext[{log: List[String]}]
 
-type alias InterceptorFn = CurrentInterceptorContext -> CurrentInterceptorContext
+type alias InterceptorFn[e] = CurrentInterceptorContext -> CurrentInterceptorContext & e
 
 pub enum Interceptor {
   case Enter(InterceptorFn)
@@ -117,10 +117,14 @@ def logName(name: String): CurrentInterceptorContext -> CurrentInterceptorContex
 // The main entry point.
 def main(): CurrentInterceptorContext & Impure =
   let enterInt = Enter(logName("enter only"));
+  let enterIntEff = Enter(c -> {
+      Console.printLine("Test");
+      c
+  });
   let leaveInt = Leave(logName("leave only"));
   let bothInt = Both(logName("enter then leave"), logName("leave"));
   let someCtx = Context({
-    toEnter = Queue.enq(Queue.enq(Queue.enq(Queue.empty(), leaveInt), enterInt), bothInt),
+    toEnter = Queue.enq(Queue.enq(Queue.enq(Queue.enq(Queue.empty(), leaveInt), enterInt), bothInt), enterIntEff),
     toLeave = Stack.empty(),
     log = Nil
   });
