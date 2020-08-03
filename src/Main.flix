@@ -4,17 +4,17 @@ namespace Stack {
   pub def empty(): Stack[a] = Stack({stack = Nil})
 
   pub def isEmpty(s: Stack[a]): Bool =
-    match s with {
+    match s {
       case Stack(theStack) => List.isEmpty(theStack.stack)
     }
 
   pub def push(s: Stack[a], val: a): Stack[a] =
-    match s with {
+    match s {
       case Stack(theStack) => Stack({stack = val :: theStack.stack})
     }
 
   pub def pop(s: Stack[a]): (Option[a], Stack[a]) =
-    match s with {
+    match s {
       case Stack(theStack) => (
         List.head(theStack.stack),
         Stack({stack = List.drop(1, theStack.stack)})
@@ -32,12 +32,12 @@ namespace Queue {
     Queue({enqueue = Nil, dequeue = Nil})
 
   pub def isEmpty(q: Queue[a]): Bool =
-    List.isEmpty(match q with {
+    List.isEmpty(match q {
       case Queue(theQ) => theQ.dequeue
     })
 
   pub def enq(q: Queue[a], e: a): Queue[a] =
-    let theQ = match q with {
+    let theQ = match q {
       case Queue(qq) => qq
     };
     let newQ = e :: theQ.enqueue;
@@ -47,89 +47,88 @@ namespace Queue {
     if (isEmpty(q))
       (None, q)
     else
-      let theQ = match q with {
+      let theQ = match q {
         case Queue(qq) => qq
       };
       let newDQ = List.drop(1, theQ.dequeue);
       (List.head(theQ.dequeue), Queue({enqueue = List.reverse(newDQ), dequeue = newDQ}))
 }
 
-enum InterceptorContext[config] {
+enum InterceptorContext[config, e] {
   case Context({
-    toEnter: Queue.Queue[Interceptor],
-    toLeave: Stack.Stack[Interceptor]
+    toEnter: Queue.Queue[Interceptor[e]],
+    toLeave: Stack.Stack[Interceptor[e]]
     | config
   })
 }
 
-type alias CurrentInterceptorContext = InterceptorContext[{log: List[String]}]
+type alias CurrentInterceptorContext = InterceptorContext[{log: List[String]}, Impure]
 
 type alias InterceptorFn[e] = CurrentInterceptorContext -> CurrentInterceptorContext & e
 
-pub enum Interceptor {
-  case Enter(InterceptorFn)
-  case Leave(InterceptorFn)
-  case Both(InterceptorFn, InterceptorFn)
+pub opaque type Interceptor[e] = {
+  enter: Option[InterceptorFn[e]],
+  leave: Option[InterceptorFn[e]]
 }
 
-def execute(ctx: CurrentInterceptorContext): CurrentInterceptorContext & Impure =
-  let theCtx = match ctx with {
+def execute(ctx: CurrentInterceptorContext): CurrentInterceptorContext =
+  let theCtx = match ctx {
     case Context(c) => c
   };
   let (nextEnterInterceptor, newQueue) = Queue.deq(theCtx.toEnter);
-  match nextEnterInterceptor with {
+  match nextEnterInterceptor {
     // Enter
     case Some(interceptor) =>
-      match interceptor with {
-        case Enter(f) =>
-          execute(f(Context({toEnter = newQueue | theCtx})))
-        case Both(enterFn, _) =>
-          let newCtx = match enterFn(Context({toEnter = newQueue | theCtx})) with {
-            case Context(c) => c
-          };
-          let newStack = Stack.push(newCtx.toLeave, interceptor);
-          execute(Context({toLeave = newStack | newCtx}))
-        case _ =>
-          let newStack = Stack.push(theCtx.toLeave, interceptor);
-          execute(Context({toEnter = newQueue, toLeave = newStack | theCtx}))
+      let newStack = Stack.push(theCtx.toLeave, interceptor);
+      match interceptor {
+        case Interceptor(i) => match i.enter {
+          case Some(fn) => execute(
+            fn(Context({toEnter = newQueue, toLeave = newStack | theCtx})))
+          case None => execute(Context({toEnter = newQueue, toLeave = newStack | theCtx}))
+        }
       }
     // Leave
     case None =>
       let (nextLeaveInterceptor, newStack) = Stack.pop(theCtx.toLeave);
-      match nextLeaveInterceptor with {
+      match nextLeaveInterceptor {
         case None => ctx
         case Some(interceptor) =>
-          match interceptor with {
-            case Leave(f) => execute(f(Context({toLeave = newStack | theCtx})))
-            case Both(_, leaveFn) => execute(leaveFn(Context({toLeave = newStack | theCtx})))
-            case _ => execute(Context({toLeave = newStack | theCtx}))
+          match interceptor {
+            case Interceptor(i) => match i.leave {
+              case Some(fn) => execute(
+                fn(Context({toLeave = newStack | theCtx}))
+              )
+              case None => execute(
+                Context({toLeave = newStack | theCtx})
+              )
+            }
           }
       }
   }
 
 def logName(name: String): CurrentInterceptorContext -> CurrentInterceptorContext =
   ctx ->
-    let theCtx = match ctx with {
+    let theCtx = match ctx {
       case Context(c) => c
     };
     Context({log = name :: theCtx.log | theCtx})
 
 // The main entry point.
 def main(): CurrentInterceptorContext & Impure =
-  let enterInt = Enter(logName("enter only"));
-  let enterIntEff = Enter(c -> {
+  let enterInt = Interceptor({enter = Some(logName("enter only")), leave = None});
+  let enterIntEff = Interceptor({enter = Some(c -> {
       Console.printLine("Test");
       c
-  });
-  let leaveInt = Leave(logName("leave only"));
-  let bothInt = Both(logName("enter then leave"), logName("leave"));
+  }), leave = None});
+  let leaveInt = Interceptor({enter = None, leave = Some(logName("leave only") as Impure)});
+  let bothInt = Interceptor({enter = Some(logName("enter then leave") as Impure), leave = Some(logName("leave") as Impure)});
   let someCtx = Context({
     toEnter = Queue.enq(Queue.enq(Queue.enq(Queue.enq(Queue.empty(), leaveInt), enterInt), bothInt), enterIntEff),
     toLeave = Stack.empty(),
     log = Nil
   });
   let finalCtx = execute(someCtx);
-  match finalCtx with {
+  match finalCtx {
     case Context(c) => List.foreach(logLine -> Console.printLine(logLine), c.log)
   };
   finalCtx
